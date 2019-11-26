@@ -1,0 +1,173 @@
+
+QWebChannel是一个基于json的异步远程调用协议
+
+------------------------------------------------------------------------------------
+协议的基本格式为json字符串，从客户端的角度看，分为请求和应答两种json对象，两者通用的字段为：
+
+type
+number类型，表示具体的功能类型。
+
+id
+number类型，由客户端生产的一个唯一id，若服务器对客户端的请求进行应答，则返回相同的id。使用id来进行请求和响应的匹配。当无需服务器进行响应请求时，比如为信号请求时，可省略该字段。
+
+------------------------------------------------------------------------------------
+
+术语解释：
+object: QWebchannel由服务器提供函数和信号服务，由服务对象（object）暴露给客户端，每一个服务对象object由一个字符串名，object对象包含函数和信号。
+method: 远程调用object上的函数。
+signal：信号，可以理解为订阅模式，客户端向服务器订阅object的信号，然后服务器在信号激发时主动通知客户端。
+
+
+QWebchannel协议提供三种功能：
+
+1. 函数调用
+    客服端调用服务器的函数。
+
+请求对象
+{
+    "type": 6,
+    "id": number,
+    "object": string,
+    "method": number,
+    "args": array
+}
+
+type值为6表示该请求对象为函数调用
+
+object表示服务器注册的对象，在服务器端，可以注册多个对象，每个对象提供函数和信号服务。
+对于PrinPro而言，object的值为"PrintPro"
+
+method表示函数的签名，每一个服务端的object的函数都有一个字符串签名和数字签名，method的值即为函数的数字签名。
+
+客户端通过<初始化>来获取服务端的object对象，从而可以知道服务器暴露的函数信息。
+
+
+应答对象
+{
+    "type": 10,
+    "id": number,
+    "data"：any
+}
+
+type值为10表示函数调用的服务器相应结果
+
+id为客户端请求传入的id
+
+data为函数调用的结果，可以是string，bool，number，object，array和null类型。
+若为object和array类型，具体的json定义则由用户自己协商。
+
+Example:
+请求: {"type": 6, "id": 10, "object": "PrintPro", "method": 5, "args": [100, true, "stringtest"]}
+响应: {"type": 10, "id": 10, "data": true}
+--------------------------------------------------------------------------------------------
+
+2. 信号
+    即pub/sub模式（订阅模式），客户端可以在服务器注册感兴趣的信号，服务器在发生该信号后主动通知客户端。
+
+客户端信号连接（订阅）:
+{
+    "type": 7,
+    "object": string,
+    "signal": number,
+}
+由客户端往服务器发送该json对象，用以向服务器注册感兴趣的信号。
+
+type值为7时表示客户端往服务器发起信号的连接，该连接立即生效，无需服务器的应答。
+当type值为8时表示客户端断开和服务器的信号连接，断开连接后，服务器不再往服务器发送相关的信号。
+
+object表示服务器指定的服务对象。
+signal表示指定的object对象上的信号签名，每一个信号有字符串和数字两种签名，这里使用的时数字签名。
+
+服务器信号通知（发布）:
+{
+    "type": 1,
+    "object": string,
+    "signal": number,
+    "args": array
+}
+由服务器发送相应的信号到客户端。
+object为服务器的object对象，signal为信号数字签名，args为信号的参数。
+
+Example:
+客户端连接：{"type": 7, "object": "PrintPro", "signal": 5},客户端向服务器注册服务对象"PrintPro"上的信号5.
+客户端断开连接：{"type": 8, "object": "PrintPro", "signal": 5}，客户端断开和服务器对象"PrintPro"上信号5的连接。
+服务器信号通知：{"type": 1, "object": "PrintPro", "signal": 5, ["hello", 100, true]}，服务器通知客户端信号5，且传参为["hell0", 100, true]
+
+-------------------------------------------------------------------------------------------
+
+3. 属性
+    PrintPro未使用该协议。
+
+-------------------------------------------------------------------------------------------
+
+4. 初始化
+    客户端从服务器获取服务器公开的方法和信号。
+
+请求对象（Init）：
+{
+    "type": 3,
+    "id": number,
+}
+
+使用该对象获取服务器的注册的obejct对象及其函数和信号签名，有服务器对该请求进行响应，应答格式为：
+{
+    "type": 10, 
+    "id": number,
+    "data": {
+        "object name 1": {
+            "methods": [[method name, method number]]
+            "signals": [[signal name, signal number]]
+        }
+
+        "object name 2": {
+            "methods": [[method name, method number]]
+            "signals": [[signal name, signal number]]
+        }
+    }
+}
+
+data中以键值的方式来组织服务器暴露的object对象信息
+
+"object name 1"和"object name 2"表示object的名字，对于PrintPro而言，只有一个object，为"PrintPro"
+
+"methods"表示对应object的函数信息，数组的元素为2元数组，表示函数的字符签名和数字签名
+
+"signals"表示对应object的信号信息，数组的元素为2元数组，表示信号的字符签名和数字签名
+
+
+**注意**
+在发送Init请求对象，客户端接收服务器的应答后，客户端应发送json对象：
+{
+    "type": 4
+}
+表明客户端以初始化完毕，处于正常运行状态，该请求无响应。
+
+
+--------------------------------------------------------------------------------------------------
+
+使用该协议与PrintPro通信:
+
+1. 可以使用任何编程语言，需支持websocket客户端功能。
+
+2. 使用websocket的字符串发送和接收功能发送json字符串，编码为utf16
+
+3. 使用websocket连接PrintPro后使用上述的<初始化>方法，获取服务器公开的服务对象，函数和信号等信息。
+
+4. 注意QWebchannel的一切请求均为异步调用，。每个请求的id应不同。
+
+
+type类型总结：
+enum QWebChannelMessageTypes
+{
+	mtSignal = 1,    //信号通知
+	mtPropertyUpdate = 2,   //不使用
+	mtInit = 3,     //初始化
+	mtIdle = 4,     //客户端正常通告
+	mtDebug = 5,    //不使用
+	mtInvokeMethod = 6, //函数调用
+	mtConnectToSignal = 7,  //信号连接
+	mtDisconnectFromSignal = 8, //断开信号连接
+	setProperty = 9,    //不使用
+	mtResponse = 10,    //服务器对请求的响应
+};
+
